@@ -1,0 +1,99 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user in the system.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "createdAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "A feedback testing project.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "name": { "type": "string" },
+        "templateType": { "type": "string", "enum": ["concept", "page", "prototype", "creative"] },
+        "objective": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "active", "completed"] },
+        "targetAudience": { "type": "string" },
+        "expectedSamples": { "type": "number" },
+        "stimulusType": { "type": "string", "enum": ["image", "url", "text"] },
+        "stimulusContent": { "type": "string" },
+        "questionPrompt": { "type": "string", "description": "System prompt prefix or opening message" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "name", "templateType", "status", "createdAt", "updatedAt"]
+    },
+    "InterviewSession": {
+      "title": "InterviewSession",
+      "description": "An interview session for a project.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "mode": { "type": "string", "enum": ["text", "voice"] },
+        "status": { "type": "string", "enum": ["in_progress", "completed", "qualified_out"] },
+        "durationMs": { "type": "number" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "metadata": { "type": "object" },
+        "summary": { "type": "string" },
+        "sentiment": { "type": "string", "enum": ["positive", "negative", "neutral", "confused", "unspecified"] }
+      },
+      "required": ["projectId", "status", "startedAt"]
+    },
+     "Message": {
+      "title": "Message",
+      "description": "A message within an interview session.",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["system", "ai", "user"] },
+        "content": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["role", "content", "createdAt"]
+    },
+    "Insight": {
+      "title": "Insight",
+      "description": "Generated insight across interview sessions.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "type": { "type": "string", "enum": ["theme", "risk", "driver", "confusion"] },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "evidenceIds": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "type", "title", "summary", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Registered users (owners)."
+    },
+    "/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/Project" },
+      "description": "A project created by an owner."
+    },
+    "/projects/{projectId}/sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/InterviewSession" },
+      "description": "A respondent session."
+    },
+    "/projects/{projectId}/sessions/{sessionId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Session chat log."
+    },
+    "/projects/{projectId}/insights/{insightId}": {
+      "schema": { "$ref": "#/entities/Insight" },
+      "description": "Post-process insights."
+    }
+  }
+}

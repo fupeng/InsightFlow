@@ -1,0 +1,164 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Functions
+    function isSignedIn() { return request.auth != null; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
+    // --- User Profile ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'createdAt']) && 
+             data.email is string && data.email.size() <= 256 &&
+             data.createdAt is string && data.createdAt.size() <= 64 &&
+             (data.keys().hasOnly(['email', 'name', 'createdAt']) == true || !data.keys().hasAny(['email'])) &&
+             (!data.keys().hasAny(['name']) || (data.name is string && data.name.size() <= 128));
+    }
+    
+    match /users/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && request.auth.uid == userId && 
+                       isValidUser(incoming()) && incoming().createdAt == request.time.toIsoString() &&
+                       incoming().email == request.auth.token.email && request.auth.token.email_verified == true;
+      allow update: if isSignedIn() && request.auth.uid == userId && 
+                       isValidUser(incoming()) && 
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name']) &&
+                       incoming().email == existing().email &&
+                       incoming().createdAt == existing().createdAt;
+    }
+
+    // --- Projects ---
+    function isValidProjectCreate(data) {
+       return data.keys().hasAll(['ownerId', 'name', 'templateType', 'status', 'createdAt', 'updatedAt']) &&
+              data.ownerId == request.auth.uid &&
+              data.name is string && data.name.size() > 0 && data.name.size() <= 128 &&
+              data.templateType in ["concept", "page", "prototype", "creative"] &&
+              data.status == "draft" &&
+              (!data.keys().hasAny(['objective']) || (data.objective is string && data.objective.size() <= 10000)) &&
+              (!data.keys().hasAny(['targetAudience']) || (data.targetAudience is string && data.targetAudience.size() <= 10000)) &&
+              (!data.keys().hasAny(['expectedSamples']) || (data.expectedSamples is number && data.expectedSamples <= 10000)) &&
+              (!data.keys().hasAny(['stimulusType']) || (data.stimulusType in ["image", "url", "text"])) &&
+              (!data.keys().hasAny(['stimulusContent']) || (data.stimulusContent is string && data.stimulusContent.size() <= 5000000)) &&
+              (!data.keys().hasAny(['questionPrompt']) || (data.questionPrompt is string && data.questionPrompt.size() <= 10000)) &&
+              data.createdAt == request.time.toIsoString() &&
+              data.updatedAt == request.time.toIsoString() &&
+              exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    
+    function isValidProjectUpdate(data) {
+       return data.name is string && data.name.size() > 0 && data.name.size() <= 128 &&
+              data.templateType in ["concept", "page", "prototype", "creative"] &&
+              data.status in ["draft", "active", "completed"] &&
+              (!data.keys().hasAny(['objective']) || (data.objective is string && data.objective.size() <= 10000)) &&
+              (!data.keys().hasAny(['targetAudience']) || (data.targetAudience is string && data.targetAudience.size() <= 10000)) &&
+              (!data.keys().hasAny(['expectedSamples']) || (data.expectedSamples is number && data.expectedSamples <= 10000)) &&
+              (!data.keys().hasAny(['stimulusType']) || (data.stimulusType in ["image", "url", "text"])) &&
+              (!data.keys().hasAny(['stimulusContent']) || (data.stimulusContent is string && data.stimulusContent.size() <= 5000000)) &&
+              (!data.keys().hasAny(['questionPrompt']) || (data.questionPrompt is string && data.questionPrompt.size() <= 10000)) &&
+              data.createdAt == existing().createdAt &&
+              data.ownerId == existing().ownerId;
+    }
+
+    match /projects/{projectId} {
+      allow get: if (isSignedIn() && existing().ownerId == request.auth.uid) || (existing().status == "active");
+      allow list: if (isSignedIn() && existing().ownerId == request.auth.uid) || (existing().status == "active");
+      
+      allow create: if isSignedIn() && isValidId(projectId) && isValidProjectCreate(incoming());
+      
+      allow update: if isSignedIn() && existing().ownerId == request.auth.uid && isValidProjectUpdate(incoming()) &&
+                    incoming().diff(existing()).affectedKeys().hasOnly([
+                       'name', 'templateType', 'status', 'objective', 'targetAudience', 
+                       'expectedSamples', 'stimulusType', 'stimulusContent', 'questionPrompt', 'updatedAt'
+                    ]);
+      allow delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+    }
+
+    // --- Interview Sessions ---
+    function isSessionOpAllowed(projectId) {
+       return get(/databases/$(database)/documents/projects/$(projectId)).data.status == "active" ||
+              get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid;
+    }
+    
+    function isValidSessionCreate(data, projectId) {
+       return data.keys().hasAll(['projectId', 'status', 'startedAt']) &&
+              data.projectId == projectId &&
+              data.status == "in_progress" &&
+              (!data.keys().hasAny(['mode']) || (data.mode in ["text", "voice"])) &&
+              (!data.keys().hasAny(['durationMs']) || (data.durationMs is number)) &&
+              (!data.keys().hasAny(['metadata']) || (data.metadata is map)) &&
+              data.startedAt == request.time.toIsoString();
+    }
+    
+    function isValidSessionUpdate(data, projectId) {
+        return data.projectId == projectId &&
+               data.status in ["in_progress", "completed", "qualified_out"] &&
+               data.startedAt == existing().startedAt &&
+               (!data.keys().hasAny(['durationMs']) || (data.durationMs is number)) &&
+               (!data.keys().hasAny(['completedAt']) || (data.completedAt is string && data.completedAt.size() <= 64)) &&
+               (!data.keys().hasAny(['summary']) || (data.summary is string && data.summary.size() <= 100000)) &&
+               (!data.keys().hasAny(['sentiment']) || (data.sentiment in ["positive", "negative", "neutral", "confused", "unspecified"])) &&
+               (!data.keys().hasAny(['sessionUUID']) || data.sessionUUID is string);
+    }
+
+    match /projects/{projectId}/sessions/{sessionId} {
+      allow get: if isSessionOpAllowed(projectId);
+      allow list: if isSignedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid;
+      
+      allow create: if isValidId(sessionId) && isValidId(projectId) &&
+                       get(/databases/$(database)/documents/projects/$(projectId)).data.status == "active" &&
+                       isValidSessionCreate(incoming(), projectId);
+                       
+      allow update: if isValidSessionUpdate(incoming(), projectId) &&
+                       (
+                         (existing().status == "in_progress" && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'durationMs', 'completedAt', 'summary', 'sentiment'])) ||
+                         (isSignedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid)
+                       );
+    }
+    
+    // --- Messages ---
+    function isValidMessageCreate(data) {
+      return data.keys().hasAll(['role', 'content', 'createdAt']) &&
+             data.role in ["system", "ai", "user"] &&
+             data.content is string && data.content.size() <= 200000 &&
+             data.createdAt == request.time.toIsoString();
+    }
+
+    match /projects/{projectId}/sessions/{sessionId}/messages/{messageId} {
+      allow get, list: if isSessionOpAllowed(projectId);
+      
+      allow create: if isValidId(messageId) && isValidId(sessionId) && isValidId(projectId) &&
+                       isSessionOpAllowed(projectId) &&
+                       get(/databases/$(database)/documents/projects/$(projectId)/sessions/$(sessionId)).data.status == "in_progress" &&
+                       isValidMessageCreate(incoming());
+    }
+
+    // --- Insights ---
+    function isValidInsightCreate(data, projectId) {
+       return data.keys().hasAll(['projectId', 'type', 'title', 'summary', 'createdAt']) &&
+              data.projectId == projectId &&
+              data.type in ["theme", "risk", "driver", "confusion"] &&
+              data.title is string && data.title.size() <= 2000 &&
+              data.summary is string && data.summary.size() <= 50000 &&
+              (!data.keys().hasAny(['evidenceIds']) || (data.evidenceIds is list && data.evidenceIds.size() <= 100)) &&
+              data.createdAt == request.time.toIsoString();
+    }
+
+    match /projects/{projectId}/insights/{insightId} {
+      allow read: if isSignedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(insightId) && isValidId(projectId) &&
+                       get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid &&
+                       isValidInsightCreate(incoming(), projectId);
+      allow update: if isSignedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['title', 'summary', 'evidenceIds']) &&
+                       incoming().projectId == existing().projectId &&
+                       incoming().type == existing().type &&
+                       incoming().createdAt == existing().createdAt;
+      allow delete: if isSignedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid;
+    }
+  }
+}
